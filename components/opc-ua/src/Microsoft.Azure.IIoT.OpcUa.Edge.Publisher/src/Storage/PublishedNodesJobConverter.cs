@@ -108,7 +108,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                 }
                                 return true;
                             })
-                            .Batch(1000)) // NOTE: Probably batches things together...
+                            .Batch(1000))
                         // time to create the internal structure for events
                         .Select(opcEntities => new PublishedDataSetSourceModel {
                             Connection = group.Key.Clone(),
@@ -336,7 +336,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// Describing an entry in the node list
         /// </summary>
         [DataContract]
-        public abstract class OpcBaseNodeModel {
+        public abstract class OpcBaseNodeModel { // NOTE: Can we do this?
 
             /// <summary> Node Identifier </summary>
             [DataMember(EmitDefaultValue = false)]
@@ -370,7 +370,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// Describing an entry in the node list
         /// </summary>
         [DataContract]
-        public class OpcDataNodeModel : OpcBaseNodeModel {
+        public class OpcDataNodeModel : OpcBaseNodeModel { // NOTE: Can we do this?
 
             /// <summary> Sampling interval </summary>
             [DataMember(EmitDefaultValue = false)]

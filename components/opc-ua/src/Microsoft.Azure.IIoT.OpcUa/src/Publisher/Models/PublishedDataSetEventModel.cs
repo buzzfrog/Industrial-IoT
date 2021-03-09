@@ -10,7 +10,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Models {
     /// <summary>
     /// Describes event fields to be published
     /// </summary>
-    public class PublishedDataSetEventModel {
+    public class PublishedDataSetEventModel { // NOTE: Base class? 
 
         /// <summary>
         /// Identifier of event in the dataset.
@@ -20,7 +20,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Models {
         /// <summary>
         /// Event notifier to subscribe to (or start node)
         /// </summary>
-        public string EventNotifier { get; set; }
+        public string EventNotifier { get; set; } 
 
         /// <summary>
         /// Browse path to event notifier node (Publisher extension)
@@ -30,12 +30,12 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Models {
         /// <summary>
         /// Fields to select
         /// </summary>
-        public List<SimpleAttributeOperandModel> SelectedFields { get; set; }
+        public List<SimpleAttributeOperandModel> SelectedFields { get; set; } // NOTE: If we follow spec: SelectClauses. https://reference.opcfoundation.org/v104/Core/docs/Part4/7.17.3/
 
         /// <summary>
         /// Filter to use
         /// </summary>
-        public ContentFilterModel Filter { get; set; }
+        public ContentFilterModel Filter { get; set; } // NOTE: If we follow spec: WhereClause. https://reference.opcfoundation.org/v104/Core/docs/Part4/7.17.3/
 
         /// <summary>
         /// Queue size (Publisher extension)
@@ -43,7 +43,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Models {
         public uint? QueueSize { get; set; }
 
         /// <summary>
-        /// Discard new values if queue is full (Publisher extension)
+        /// Discard new values if queue is full (Publisher extension) // NOTE: What does publisher extension mean?
         /// </summary>
         public bool? DiscardNew { get; set; }
 
