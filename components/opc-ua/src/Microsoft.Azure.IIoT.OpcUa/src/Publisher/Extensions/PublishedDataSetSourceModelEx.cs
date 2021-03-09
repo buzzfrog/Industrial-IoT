@@ -42,14 +42,15 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Models {
                 model.Connection?.User?.Type.ToString() +
                 model.Connection?.User?.Value.ToJson() +
                 model.SubscriptionSettings?.PublishingInterval.ToString() +
-                model.PublishedVariables?.PublishedData.First()?.Id +
-                model.PublishedVariables?.PublishedData.First()?.PublishedVariableNodeId +
-                model.PublishedVariables?.PublishedData.First()?.PublishedVariableDisplayName +
-                model.PublishedVariables?.PublishedData.First()?.SamplingInterval +
-                model.PublishedVariables?.PublishedData.First()?.HeartbeatInterval +
-                model.PublishedEvents?.PublishedEvents.First()?.Id +        // TODO: This needs to verified
-                model.PublishedEvents?.PublishedEvents.First()?.EventNotifier +
-                model.PublishedEvents?.PublishedEvents.First()?.BrowsePath;
+                // NOTE: This doesn't work. "First()?" is odd.
+                model.PublishedVariables?.PublishedData.FirstOrDefault()?.Id +
+                model.PublishedVariables?.PublishedData.FirstOrDefault()?.PublishedVariableNodeId +
+                model.PublishedVariables?.PublishedData.FirstOrDefault()?.PublishedVariableDisplayName +
+                model.PublishedVariables?.PublishedData.FirstOrDefault()?.SamplingInterval +
+                model.PublishedVariables?.PublishedData.FirstOrDefault()?.HeartbeatInterval +
+                model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.Id +        // TODO: This needs to verified
+                model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.EventNotifier +
+                model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.BrowsePath; // NOTE: This is never set?
             return id.ToSha1Hash();
         }
 

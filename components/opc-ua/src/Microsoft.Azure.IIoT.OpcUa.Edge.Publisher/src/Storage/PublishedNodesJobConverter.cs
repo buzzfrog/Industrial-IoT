@@ -75,226 +75,145 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                 return Enumerable.Empty<WriterGroupJobModel>();
             }
             try {
-                IEnumerable<WriterGroupJobModel> opcEventsItems = new List<WriterGroupJobModel>();
-                IEnumerable<WriterGroupJobModel> opcNodesItems = new List<WriterGroupJobModel>();
-                
-                                opcEventsItems = items.Where(i => i.OpcEvents != null)
-                                    // Group by connection
-                                    .GroupBy(item => new ConnectionModel {
-                                        OperationTimeout = legacyCliModel.OperationTimeout,
-                                        Endpoint = new EndpointModel {
-                                            Url = item.EndpointUrl.OriginalString,
-                                            SecurityMode = item.UseSecurity == false &&
-                                                item.OpcAuthenticationMode != OpcAuthenticationMode.UsernamePassword ?
-                                                    SecurityMode.None : SecurityMode.Best
-                                        },
-                                        User = item.OpcAuthenticationMode != OpcAuthenticationMode.UsernamePassword ?
-                                                null : ToUserNamePasswordCredentialAsync(item).Result
-                                    },
-                                        // Select and batch nodes into published data set sources
-                                        item => GetEventModels(item, legacyCliModel.ScaleTestCount.GetValueOrDefault(1)),
-                                        // Comparer for connection information
-                                        new FuncCompare<ConnectionModel>((x, y) => x.IsSameAs(y)))
-                                    .Select(group => group
-                                        // Flatten all nodes for the same connection and group by publishing interval
-                                        // then batch in chunks for max 1000 nodes and create data sets from those.
-                                        .Flatten()
-                                        .GroupBy(n => n.OpcPublishingInterval)
-                                        .SelectMany(n => n
-                                            .Distinct((a, b) => a.Id == b.Id && a.DisplayName == b.DisplayName &&
-                                                        a.OpcSamplingInterval == b.OpcSamplingInterval)
-                                            .Batch(1000))
-                                        // time to create the internal structure for events
-                                        .Select(opcEvents => new PublishedDataSetSourceModel {
-                                            Connection = group.Key.Clone(),
-                                            SubscriptionSettings = new PublishedDataSetSettingsModel {
-                                                PublishingInterval = GetPublishingIntervalFromNodes(opcEvents, legacyCliModel),
-                                                ResolveDisplayName = legacyCliModel.FetchOpcNodeDisplayName
-                                            },
-                                            PublishedEvents = new PublishedEventItemsModel {
-                                                PublishedEvents = opcEvents
-                                                    .Select(eventNotifier => new PublishedDataSetEventModel {
-                                                        Id = string.IsNullOrEmpty(eventNotifier.DisplayName) ? eventNotifier.Id : eventNotifier.DisplayName,
-                                                        EventNotifier = eventNotifier.Id,
-                                                        SelectedFields = eventNotifier.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
-                                                            NodeId = selectedField.TypeId,
-                                                            BrowsePath = selectedField.BrowsePaths.ToArray()
-                                                        }).ToList(),
-                                                        Filter = new ContentFilterModel {
-                                                            Elements = eventNotifier.WhereClauses.Select(whereClause => new ContentFilterElementModel {
-                                                                FilterOperator = (FilterOperatorType)Enum.Parse(typeof(FilterOperatorType), whereClause.Operator),
-                                                                FilterOperands = whereClause.Operands.Select(filterOperand => new FilterOperandModel {
-                                                                    Value = filterOperand.Literal
-                                                                }).ToList()
-                                                            }).ToList()
-                                                        },
-                                                        QueueSize = legacyCliModel.DefaultQueueSize,
-                                                            // TODO: skip first?
-                                                            // SkipFirst = opcNode.SkipFirst,
-                                                        }).ToList()
-                                            }
-                                        }))
-                                    .Select(dataSetSourceBatches => new WriterGroupJobModel {
-                                        MessagingMode = legacyCliModel.MessagingMode,
-                                        Engine = _config == null ? null : new EngineConfigurationModel {
-                                            BatchSize = _config.BatchSize,
-                                            BatchTriggerInterval = _config.BatchTriggerInterval,
-                                            DiagnosticsInterval = _config.DiagnosticsInterval,
-                                            MaxMessageSize = _config.MaxMessageSize,
-                                            MaxOutgressMessages = _config.MaxOutgressMessages
-                                        },
-                                        WriterGroup = new WriterGroupModel {
-                                            MessageType = legacyCliModel.MessageEncoding,
-                                            WriterGroupId = $"{dataSetSourceBatches.First().Connection.Endpoint.Url}_" +
-                                                $"{new ConnectionIdentifier(dataSetSourceBatches.First().Connection)}",
-                                            DataSetWriters = dataSetSourceBatches.Select(dataSetSource => new DataSetWriterModel {
-                                                DataSetWriterId = $"{dataSetSource.Connection.Endpoint.Url}_" +
-                                                    $"{dataSetSource.GetHashSafe()}",
-                                                DataSet = new PublishedDataSetModel {
-                                                    DataSetSource = dataSetSource.Clone(),
-                                                },
-                                                DataSetFieldContentMask =
-                                                        DataSetFieldContentMask.StatusCode |
-                                                        DataSetFieldContentMask.SourceTimestamp |
-                                                        (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.ServerTimestamp : 0) |
-                                                        DataSetFieldContentMask.NodeId |
-                                                        DataSetFieldContentMask.DisplayName |
-                                                        DataSetFieldContentMask.ApplicationUri |
-                                                        (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.EndpointUrl : 0) |
-                                                        (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.ExtensionFields : 0),
-                                                MessageSettings = new DataSetWriterMessageSettingsModel() {
-                                                    DataSetMessageContentMask =
-                                                            (legacyCliModel.FullFeaturedMessage ? DataSetContentMask.Timestamp : 0) |
-                                                            DataSetContentMask.MetaDataVersion |
-                                                            DataSetContentMask.DataSetWriterId |
-                                                            DataSetContentMask.MajorVersion |
-                                                            DataSetContentMask.MinorVersion |
-                                                            (legacyCliModel.FullFeaturedMessage ? DataSetContentMask.SequenceNumber : 0)
-                                                }
-                                            }).ToList(),
-                                            MessageSettings = new WriterGroupMessageSettingsModel() {
-                                                NetworkMessageContentMask =
-                                                        NetworkMessageContentMask.PublisherId |
-                                                        NetworkMessageContentMask.WriterGroupId |
-                                                        NetworkMessageContentMask.NetworkMessageNumber |
-                                                        NetworkMessageContentMask.SequenceNumber |
-                                                        NetworkMessageContentMask.PayloadHeader |
-                                                        NetworkMessageContentMask.Timestamp |
-                                                        NetworkMessageContentMask.DataSetClassId |
-                                                        NetworkMessageContentMask.NetworkMessageHeader |
-                                                        NetworkMessageContentMask.DataSetMessageHeader
-                                            }
-                                        }
-                                    });
-         
-
-                opcNodesItems = items.Where(i => i.OpcNodes != null || (i.OpcNodes == null && i.OpcEvents == null))
-                // Group by connection
-                .GroupBy(item => new ConnectionModel {
-                    OperationTimeout = legacyCliModel.OperationTimeout,
-                    Endpoint = new EndpointModel {
-                        Url = item.EndpointUrl.OriginalString,
-                        SecurityMode = item.UseSecurity == false &&
-                             item.OpcAuthenticationMode != OpcAuthenticationMode.UsernamePassword ?
-                                 SecurityMode.None : SecurityMode.Best
+                IEnumerable<WriterGroupJobModel> writerGroupJobs = new List<WriterGroupJobModel>();
+                writerGroupJobs = items
+                    // Group by connection
+                    .GroupBy(item => new ConnectionModel {
+                        OperationTimeout = legacyCliModel.OperationTimeout,
+                        Endpoint = new EndpointModel {
+                            Url = item.EndpointUrl.OriginalString,
+                            SecurityMode = item.UseSecurity == false &&
+                                item.OpcAuthenticationMode != OpcAuthenticationMode.UsernamePassword ?
+                                    SecurityMode.None : SecurityMode.Best
+                        },
+                        User = item.OpcAuthenticationMode != OpcAuthenticationMode.UsernamePassword ?
+                                null : ToUserNamePasswordCredentialAsync(item).Result
                     },
-                    User = item.OpcAuthenticationMode != OpcAuthenticationMode.UsernamePassword ?
-                             null : ToUserNamePasswordCredentialAsync(item).Result
-                },
-                     // Select and batch nodes into published data set sources
-                     item => GetNodeModels(item, legacyCliModel.ScaleTestCount.GetValueOrDefault(1)),
-                     // Comparer for connection information
-                     new FuncCompare<ConnectionModel>((x, y) => x.IsSameAs(y)))
-
-                .Select(group => group
-                     // Flatten all nodes for the same connection and group by publishing interval
-                     // then batch in chunks for max 1000 nodes and create data sets from those.
-                     .Flatten()
-                     .GroupBy(n => n.OpcPublishingInterval)
-                     .SelectMany(n => n
-                         .Distinct((a, b) => a.Id == b.Id && a.DisplayName == b.DisplayName &&
-                                     a.OpcSamplingInterval == b.OpcSamplingInterval)
-                         .Batch(1000))
-                     .Select(opcNodes => new PublishedDataSetSourceModel {
-                         Connection = group.Key.Clone(),
-                         SubscriptionSettings = new PublishedDataSetSettingsModel {
-                             PublishingInterval = GetPublishingIntervalFromNodes(opcNodes, legacyCliModel),
-                             ResolveDisplayName = legacyCliModel.FetchOpcNodeDisplayName
-                         },
-                         PublishedVariables = new PublishedDataItemsModel {
-                             PublishedData = opcNodes
-                                 .Select(node => new PublishedDataSetVariableModel {
-                                     // this is the monitored item id, not the nodeId!
-                                     // Use the display name if any otherwisw the nodeId
-                                     Id = string.IsNullOrEmpty(node.DisplayName)
-                                         ? node.Id : node.DisplayName,
-                                     PublishedVariableNodeId = node.Id,
-                                     PublishedVariableDisplayName = node.DisplayName,
-                                     SamplingInterval = node.OpcSamplingIntervalTimespan ??
-                                         legacyCliModel.DefaultSamplingInterval,
-                                     HeartbeatInterval = node.HeartbeatInterval.HasValue ?
-                                         TimeSpan.FromSeconds(node.HeartbeatInterval.Value) :
-                                         legacyCliModel.DefaultHeartbeatInterval,
-                                     QueueSize = legacyCliModel.DefaultQueueSize,
-                                     // TODO: skip first?
-                                     // SkipFirst = opcNode.SkipFirst,
-                                 }).ToList()
-                         }
-                     }))
-                 .Select(dataSetSourceBatches => new WriterGroupJobModel {
-                     MessagingMode = legacyCliModel.MessagingMode,
-                     Engine = _config == null ? null : new EngineConfigurationModel {
-                         BatchSize = _config.BatchSize,
-                         BatchTriggerInterval = _config.BatchTriggerInterval,
-                         DiagnosticsInterval = _config.DiagnosticsInterval,
-                         MaxMessageSize = _config.MaxMessageSize,
-                         MaxOutgressMessages = _config.MaxOutgressMessages
-                     },
-                     WriterGroup = new WriterGroupModel {
-                         MessageType = legacyCliModel.MessageEncoding,
-                         WriterGroupId = $"{dataSetSourceBatches.First().Connection.Endpoint.Url}_" +
-                             $"{new ConnectionIdentifier(dataSetSourceBatches.First().Connection)}",
-                         DataSetWriters = dataSetSourceBatches.Select(dataSetSource => new DataSetWriterModel {
-                             DataSetWriterId = $"{dataSetSource.Connection.Endpoint.Url}_" +
-                                 $"{dataSetSource.GetHashSafe()}",
-                             DataSet = new PublishedDataSetModel {
-                                 DataSetSource = dataSetSource.Clone(),
-                             },
-                             DataSetFieldContentMask =
-                                     DataSetFieldContentMask.StatusCode |
-                                     DataSetFieldContentMask.SourceTimestamp |
-                                     (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.ServerTimestamp : 0) |
-                                     DataSetFieldContentMask.NodeId |
-                                     DataSetFieldContentMask.DisplayName |
-                                     DataSetFieldContentMask.ApplicationUri |
-                                     (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.EndpointUrl : 0) |
-                                     (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.ExtensionFields : 0),
-                             MessageSettings = new DataSetWriterMessageSettingsModel() {
-                                 DataSetMessageContentMask =
-                                         (legacyCliModel.FullFeaturedMessage ? DataSetContentMask.Timestamp : 0) |
-                                         DataSetContentMask.MetaDataVersion |
-                                         DataSetContentMask.DataSetWriterId |
-                                         DataSetContentMask.MajorVersion |
-                                         DataSetContentMask.MinorVersion |
-                                         (legacyCliModel.FullFeaturedMessage ? DataSetContentMask.SequenceNumber : 0)
-                             }
-                         }).ToList(),
-                         MessageSettings = new WriterGroupMessageSettingsModel() {
-                             NetworkMessageContentMask =
-                                     NetworkMessageContentMask.PublisherId |
-                                     NetworkMessageContentMask.WriterGroupId |
-                                     NetworkMessageContentMask.NetworkMessageNumber |
-                                     NetworkMessageContentMask.SequenceNumber |
-                                     NetworkMessageContentMask.PayloadHeader |
-                                     NetworkMessageContentMask.Timestamp |
-                                     NetworkMessageContentMask.DataSetClassId |
-                                     NetworkMessageContentMask.NetworkMessageHeader |
-                                     NetworkMessageContentMask.DataSetMessageHeader
-                         }
-                     }
-                 });
-
-                return opcNodesItems.Union(opcEventsItems).ToList();
+                        // Select and batch nodes into published data set sources
+                        item => GetModels(item, legacyCliModel.ScaleTestCount.GetValueOrDefault(1)),
+                        // Comparer for connection information
+                        new FuncCompare<ConnectionModel>((x, y) => x.IsSameAs(y)))
+                    .Select(group => group
+                        // Flatten all nodes for the same connection and group by publishing interval
+                        // then batch in chunks for max 1000 nodes and create data sets from those.
+                        .Flatten()
+                        .GroupBy(n => n.OpcPublishingInterval)
+                        .SelectMany(n => n
+                            .Distinct((a, b) => {
+                                if (a.Id != b.Id || a.DisplayName != b.DisplayName) {
+                                    return false;
+                                }
+                                if (a is OpcNodeModel node1 && b is OpcNodeModel node2 && node1.OpcSamplingInterval != node2.OpcSamplingInterval) {
+                                    return false;
+                                }
+                                return true;
+                            })
+                            .Batch(1000)) // NOTE: Probably batches things together...
+                        // time to create the internal structure for events
+                        .Select(opcEntities => new PublishedDataSetSourceModel {
+                            Connection = group.Key.Clone(),
+                            SubscriptionSettings = new PublishedDataSetSettingsModel {
+                                PublishingInterval = GetPublishingIntervalFromNodes(opcEntities, legacyCliModel),
+                                ResolveDisplayName = legacyCliModel.FetchOpcNodeDisplayName
+                            },
+                            // NOTE: Why not just combine?
+                            PublishedVariables = new PublishedDataItemsModel {
+                                    PublishedData = opcEntities
+                                        .OfType<OpcNodeModel>()
+                                        .Select(node => new PublishedDataSetVariableModel {
+                                            // this is the monitored item id, not the nodeId!
+                                            // Use the display name if any otherwisw the nodeId
+                                            Id = string.IsNullOrEmpty(node.DisplayName)
+                                                ? node.Id : node.DisplayName,
+                                            PublishedVariableNodeId = node.Id,
+                                            PublishedVariableDisplayName = node.DisplayName,
+                                            SamplingInterval = node.OpcSamplingIntervalTimespan ??
+                                                legacyCliModel.DefaultSamplingInterval,
+                                            HeartbeatInterval = node.HeartbeatInterval.HasValue ?
+                                                TimeSpan.FromSeconds(node.HeartbeatInterval.Value) :
+                                                legacyCliModel.DefaultHeartbeatInterval,
+                                            QueueSize = legacyCliModel.DefaultQueueSize,
+                                            // TODO: skip first?
+                                            // SkipFirst = opcNode.SkipFirst,
+                                        }).ToList()
+                                },
+                            PublishedEvents = new PublishedEventItemsModel {
+                                    PublishedEvents = opcEntities
+                                        .OfType<OpcEventModel>()
+                                        .Select(eventNotifier => new PublishedDataSetEventModel {
+                                            Id = string.IsNullOrEmpty(eventNotifier.DisplayName) ? eventNotifier.Id : eventNotifier.DisplayName,
+                                            EventNotifier = eventNotifier.Id, // NOTE: IMO should just be NodeId...
+                                            SelectedFields = eventNotifier.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
+                                                NodeId = selectedField.TypeId,
+                                                BrowsePath = selectedField.BrowsePaths.ToArray()
+                                            }).ToList(),
+                                            Filter = new ContentFilterModel {
+                                                Elements = eventNotifier.WhereClauses.Select(whereClause => new ContentFilterElementModel {
+                                                    FilterOperator = Enum.Parse<FilterOperatorType>(whereClause.Operator),
+                                                    FilterOperands = whereClause.Operands.Select(filterOperand => new FilterOperandModel {
+                                                        Value = filterOperand.Literal
+                                                    }).ToList()
+                                                }).ToList()
+                                            },
+                                            QueueSize = legacyCliModel.DefaultQueueSize, 
+                                            // NOTE: BrowsePath, TriggerId, etc. huh?
+                                        }).ToList()
+                                },
+                        }))
+                    .Select(dataSetSourceBatches => new WriterGroupJobModel {
+                        MessagingMode = legacyCliModel.MessagingMode,
+                        Engine = _config == null ? null : new EngineConfigurationModel {
+                            BatchSize = _config.BatchSize,
+                            BatchTriggerInterval = _config.BatchTriggerInterval,
+                            DiagnosticsInterval = _config.DiagnosticsInterval,
+                            MaxMessageSize = _config.MaxMessageSize,
+                            MaxOutgressMessages = _config.MaxOutgressMessages
+                        },
+                        WriterGroup = new WriterGroupModel {
+                            MessageType = legacyCliModel.MessageEncoding,
+                            WriterGroupId = $"{dataSetSourceBatches.First().Connection.Endpoint.Url}_" +
+                                $"{new ConnectionIdentifier(dataSetSourceBatches.First().Connection)}",
+                            DataSetWriters = dataSetSourceBatches.Select(dataSetSource => new DataSetWriterModel {
+                                DataSetWriterId = $"{dataSetSource.Connection.Endpoint.Url}_" +
+                                    $"{dataSetSource.GetHashSafe()}",
+                                DataSet = new PublishedDataSetModel {
+                                    DataSetSource = dataSetSource.Clone(),
+                                },
+                                DataSetFieldContentMask =
+                                        DataSetFieldContentMask.StatusCode |
+                                        DataSetFieldContentMask.SourceTimestamp |
+                                        (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.ServerTimestamp : 0) |
+                                        DataSetFieldContentMask.NodeId |
+                                        DataSetFieldContentMask.DisplayName |
+                                        DataSetFieldContentMask.ApplicationUri |
+                                        (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.EndpointUrl : 0) |
+                                        (legacyCliModel.FullFeaturedMessage ? DataSetFieldContentMask.ExtensionFields : 0),
+                                MessageSettings = new DataSetWriterMessageSettingsModel() {
+                                    DataSetMessageContentMask =
+                                            (legacyCliModel.FullFeaturedMessage ? DataSetContentMask.Timestamp : 0) |
+                                            DataSetContentMask.MetaDataVersion |
+                                            DataSetContentMask.DataSetWriterId |
+                                            DataSetContentMask.MajorVersion |
+                                            DataSetContentMask.MinorVersion |
+                                            (legacyCliModel.FullFeaturedMessage ? DataSetContentMask.SequenceNumber : 0)
+                                }
+                            }).ToList(),
+                            MessageSettings = new WriterGroupMessageSettingsModel() {
+                                NetworkMessageContentMask =
+                                        NetworkMessageContentMask.PublisherId |
+                                        NetworkMessageContentMask.WriterGroupId |
+                                        NetworkMessageContentMask.NetworkMessageNumber |
+                                        NetworkMessageContentMask.SequenceNumber |
+                                        NetworkMessageContentMask.PayloadHeader |
+                                        NetworkMessageContentMask.Timestamp |
+                                        NetworkMessageContentMask.DataSetClassId |
+                                        NetworkMessageContentMask.NetworkMessageHeader |
+                                        NetworkMessageContentMask.DataSetMessageHeader
+                            }
+                        }
+                    })
+                    .ToList();
+                return writerGroupJobs;
             }
             catch (Exception ex) {
                 _logger.Error(ex, "failed to convert the published nodes.");
@@ -308,9 +227,8 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// <param name="item"></param>
         /// <param name="scaleTestCount"></param>
         /// <returns></returns>
-        private IEnumerable<OpcNodeModel> GetNodeModels(PublishedNodesEntryModel item,
-                  int scaleTestCount = 1) {
-
+        private IEnumerable<BaseOpcNodeModel> GetModels(PublishedNodesEntryModel item,
+            int scaleTestCount = 1) {
             if (item.OpcNodes != null) {
                 foreach (var node in item.OpcNodes) {
                     if (string.IsNullOrEmpty(node.Id)) {
@@ -339,21 +257,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                 }
             }
 
-            if (item.NodeId?.Identifier != null) {
-                yield return new OpcNodeModel {
-                    Id = item.NodeId.Identifier,
-                };
-            }
-        }
-
-        /// <summary>
-        /// Get the node models from entry
-        /// </summary>
-        /// <param name="item"></param>
-        /// <param name="scaleTestCount"></param>
-        /// <returns></returns>
-        private IEnumerable<OpcEventModel> GetEventModels(PublishedNodesEntryModel item,
-            int scaleTestCount = 1) {
             if (item.OpcEvents != null) {
                 foreach (var node in item.OpcEvents) {
                     if (string.IsNullOrEmpty(node.Id)) {
@@ -369,22 +272,21 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                 DisplayName = string.IsNullOrEmpty(node.DisplayName) ?
                                     $"{node.Id}_{i}" : $"{node.DisplayName}_{i}",
                                 ExpandedNodeId = node.ExpandedNodeId,
-                                HeartbeatInterval = node.HeartbeatInterval,
-                                HeartbeatIntervalTimespan = node.HeartbeatIntervalTimespan,
                                 OpcPublishingInterval = node.OpcPublishingInterval,
                                 OpcPublishingIntervalTimespan = node.OpcPublishingIntervalTimespan,
-                                OpcSamplingInterval = node.OpcSamplingInterval,
-                                OpcSamplingIntervalTimespan = node.OpcSamplingIntervalTimespan,
-                                SkipFirst = node.SkipFirst
+                                SelectClauses = node.SelectClauses,
+                                WhereClauses = node.WhereClauses,
                             };
                         }
                     }
                 }
-                if (item.NodeId?.Identifier != null) {
-                    yield return new OpcEventModel {
-                        Id = item.NodeId.Identifier,
-                    };
-                }
+            }
+
+            // NOTE: Why these? Just for the query... really?
+            if (item.NodeId?.Identifier != null) {
+                yield return new OpcNodeModel {
+                    Id = item.NodeId.Identifier,
+                };
             }
         }
         /// <summary>
@@ -393,7 +295,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// <param name="opcNodes"></param>
         /// <param name="legacyCliModel">The legacy command line arguments</param>
         /// <returns></returns>
-        private static TimeSpan? GetPublishingIntervalFromNodes(IEnumerable<OpcNodeModel> opcNodes,
+        private static TimeSpan? GetPublishingIntervalFromNodes(IEnumerable<BaseOpcNodeModel> opcNodes,
             LegacyCliModel legacyCliModel) {
             var interval = opcNodes
                 .FirstOrDefault(x => x.OpcPublishingInterval != null)?.OpcPublishingIntervalTimespan;
@@ -434,7 +336,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// Describing an entry in the node list
         /// </summary>
         [DataContract]
-        public class OpcNodeModel {
+        public abstract class BaseOpcNodeModel {
 
             /// <summary> Node Identifier </summary>
             [DataMember(EmitDefaultValue = false)]
@@ -443,21 +345,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
             /// <summary> Also </summary>
             [DataMember(EmitDefaultValue = false)]
             public string ExpandedNodeId { get; set; }
-
-            /// <summary> Sampling interval </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public int? OpcSamplingInterval { get; set; }
-
-            /// <summary>
-            /// OpcSamplingInterval as TimeSpan.
-            /// </summary>
-            [IgnoreDataMember]
-            public TimeSpan? OpcSamplingIntervalTimespan {
-                get => OpcSamplingInterval.HasValue ?
-                    TimeSpan.FromMilliseconds(OpcSamplingInterval.Value) : (TimeSpan?)null;
-                set => OpcSamplingInterval = value != null ?
-                    (int)value.Value.TotalMilliseconds : (int?)null;
-            }
 
             /// <summary> Publishing interval </summary>
             [DataMember(EmitDefaultValue = false)]
@@ -477,6 +364,28 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
             /// <summary> Display name </summary>
             [DataMember(EmitDefaultValue = false)]
             public string DisplayName { get; set; }
+        }
+
+        /// <summary>
+        /// Describing an entry in the node list
+        /// </summary>
+        [DataContract]
+        public class OpcNodeModel : BaseOpcNodeModel {
+
+            /// <summary> Sampling interval </summary>
+            [DataMember(EmitDefaultValue = false)]
+            public int? OpcSamplingInterval { get; set; }
+
+            /// <summary>
+            /// OpcSamplingInterval as TimeSpan.
+            /// </summary>
+            [IgnoreDataMember]
+            public TimeSpan? OpcSamplingIntervalTimespan {
+                get => OpcSamplingInterval.HasValue ?
+                    TimeSpan.FromMilliseconds(OpcSamplingInterval.Value) : (TimeSpan?)null;
+                set => OpcSamplingInterval = value != null ?
+                    (int)value.Value.TotalMilliseconds : (int?)null;
+            }
 
             /// <summary> Heartbeat </summary>
             [DataMember(EmitDefaultValue = false)]
@@ -496,6 +405,22 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
             /// <summary> Skip first value </summary>
             [DataMember(EmitDefaultValue = false)]
             public bool? SkipFirst { get; set; }
+        }
+
+        /// <summary> OpcEventModel </summary>
+        [DataContract]
+        public class OpcEventModel : BaseOpcNodeModel {
+            /// <summary>
+            /// The SelectClauses used to select the fields which should be published for an event.
+            /// </summary>
+            [JsonProperty(Required = Required.Always)]
+            public List<SelectClauseModel> SelectClauses;
+
+            /// <summary>
+            /// The WhereClause to specify which events are of interest.
+            /// </summary>
+            [JsonProperty(Required = Required.Always)]
+            public List<WhereClauseElementModel> WhereClauses;
         }
 
         /// <summary>
@@ -553,22 +478,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
             /// <summary> Nodes defined in the collection. </summary>
             [DataMember(EmitDefaultValue = false)]
             public List<OpcEventModel> OpcEvents { get; set; }
-        }
-
-        /// <summary> OpcEventModel </summary>
-        [DataContract]
-        public class OpcEventModel : OpcNodeModel {
-            /// <summary>
-            /// The SelectClauses used to select the fields which should be published for an event.
-            /// </summary>
-            [JsonProperty(Required = Required.Always)]
-            public List<SelectClauseModel> SelectClauses;
-
-            /// <summary>
-            /// The WhereClause to specify which events are of interest.
-            /// </summary>
-            [JsonProperty(Required = Required.Always)]
-            public List<WhereClauseElementModel> WhereClauses;
         }
 
         /// <summary>
