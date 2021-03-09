@@ -7,11 +7,12 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Models {
     using Microsoft.Azure.IIoT.OpcUa.Publisher.Models;
     using Microsoft.Azure.IIoT.OpcUa.Core.Models;
     using System;
+    using System.Collections.Generic;
 
     /// <summary>
-    /// Monitored item
+    /// Base monitored item
     /// </summary>
-    public class MonitoredItemModel {
+    public abstract class BaseMonitoredItemModel {
 
         /// <summary>
         /// Identifier for this monitored item
@@ -69,23 +70,51 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Models {
         public string TriggerId { get; set; }
 
         /// <summary>
-        /// Data change filter
+        /// Clones this object
         /// </summary>
-        public DataChangeFilterModel DataChangeFilter { get; set; }
+        /// <returns></returns>
+        public abstract BaseMonitoredItemModel Clone();
 
         /// <summary>
-        /// Event filter
+        /// Compare items
         /// </summary>
-        public EventFilterModel EventFilter { get; set; }
-
-        /// <summary>
-        /// Aggregate filter
-        /// </summary>
-        public AggregateFilterModel AggregateFilter { get; set; }
-
-        /// <summary>
-        /// heartbeat interval not present if zero
-        /// </summary>
-        public TimeSpan? HeartbeatInterval { get; set; }
+        /// <param name="other"></param>
+        /// <returns></returns>
+        public virtual bool IsSameAs(BaseMonitoredItemModel other) {
+            if (other == null) {
+                return false;
+            }
+            if (TriggerId != other.TriggerId) {
+                return false;
+            }
+            if (StartNodeId != other.StartNodeId) {
+                return false;
+            }
+            if (SamplingInterval != other.SamplingInterval) {
+                return false;
+            }
+            if (QueueSize != other.QueueSize) {
+                return false;
+            }
+            if (DiscardNew != other.DiscardNew) {
+                return false;
+            }
+            if (AttributeId != other.AttributeId) {
+                return false;
+            }
+            if (IndexRange != other.IndexRange) {
+                return false;
+            }
+            if (MonitoringMode != other.MonitoringMode) {
+                return false;
+            }
+            if (DisplayName != other.DisplayName) {
+                return false;
+            }
+            if (!RelativePath.SequenceEqualsSafe(other.RelativePath)) {
+                return false;
+            }
+            return true;
+        }
     }
 }

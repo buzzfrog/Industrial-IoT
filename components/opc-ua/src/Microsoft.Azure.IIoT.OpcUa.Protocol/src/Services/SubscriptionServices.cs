@@ -170,7 +170,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
             }
 
             /// <inheritdoc/>
-            public async Task ApplyAsync(IEnumerable<MonitoredItemModel> monitoredItems,
+            public async Task ApplyAsync(IEnumerable<BaseMonitoredItemModel> monitoredItems,
                 SubscriptionConfigurationModel configuration) {
                 await _lock.WaitAsync().ConfigureAwait(false);
                 try {
@@ -337,7 +337,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
             /// <param name="activate"></param>
             /// <returns></returns>
             private async Task<bool> SetMonitoredItemsAsync(Subscription rawSubscription,
-                IEnumerable<MonitoredItemModel> monitoredItems, bool activate) {
+                IEnumerable<BaseMonitoredItemModel> monitoredItems, bool activate) {
 
                 var currentState = rawSubscription.MonitoredItems
                     .Select(m => m.Handle)
@@ -412,7 +412,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
                         }
                         try {
                             toAdd.Create(rawSubscription.Session, codec, activate);
-                            if (toAdd.Template.EventFilter?.SelectClauses?.Count > 0) {
+                            if (toAdd.EventTemplate != null) {
                                 toAdd.Item.AttributeId = Attributes.EventNotifier;
                             }
                             toAdd.Item.Notification += OnMonitoredItemChanged;
@@ -570,8 +570,9 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
                 var revisedKeepAliveCount = _subscription.Configuration.KeepAliveCount
                     .GetValueOrDefault(session.DefaultSubscription.KeepAliveCount);
                 _subscription.MonitoredItems?.ForEach(m => {
-                    if (m.HeartbeatInterval != null && m.HeartbeatInterval != TimeSpan.Zero) {
-                        var itemKeepAliveCount = (uint)m.HeartbeatInterval.Value.TotalMilliseconds /
+                    var dataModel = m as DataMonitoredItemModel;
+                    if (dataModel != null && dataModel.HeartbeatInterval != null && dataModel.HeartbeatInterval != TimeSpan.Zero) {
+                        var itemKeepAliveCount = (uint)dataModel.HeartbeatInterval.Value.TotalMilliseconds /
                             (uint)_subscription.Configuration.PublishingInterval.Value.TotalMilliseconds;
                         revisedKeepAliveCount = GreatCommonDivisor(revisedKeepAliveCount, itemKeepAliveCount);
                     }
@@ -895,7 +896,17 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
             /// <summary>
             /// Monitored item
             /// </summary>
-            public MonitoredItemModel Template { get; }
+            public BaseMonitoredItemModel Template { get; }
+
+            /// <summary>
+            /// Monitored data item
+            /// </summary>
+            public DataMonitoredItemModel DataTemplate { get { return Template as DataMonitoredItemModel; } }
+
+            /// <summary>
+            /// Monitored event item
+            /// </summary>
+            public EventMonitoredItemModel EventTemplate { get { return Template as EventMonitoredItemModel; } }
 
             /// <summary>
             /// Monitored item created from template
@@ -913,14 +924,17 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
             /// </summary>
             /// <returns></returns>
             public bool ValidateHeartbeat(DateTime currentPublish) {
+                if (DataTemplate == null) {
+                    return false;
+                }
                 if (NextHeartbeat == DateTime.MaxValue) {
                     return false;
                 }
                 if (NextHeartbeat > currentPublish + TimeSpan.FromMilliseconds(50)) {
                     return false;
                 }
-                NextHeartbeat = TimeSpan.Zero < Template.HeartbeatInterval.GetValueOrDefault(TimeSpan.Zero) ?
-                    currentPublish + Template.HeartbeatInterval.Value : DateTime.MaxValue;
+                NextHeartbeat = TimeSpan.Zero < DataTemplate.HeartbeatInterval.GetValueOrDefault(TimeSpan.Zero) ?
+                    currentPublish + DataTemplate.HeartbeatInterval.Value : DateTime.MaxValue;
                 return true;
             }
 
@@ -929,7 +943,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
             /// </summary>
             /// <param name="template"></param>
             /// <param name="logger"></param>
-            public MonitoredItemWrapper(MonitoredItemModel template, ILogger logger) {
+            public MonitoredItemWrapper(BaseMonitoredItemModel template, ILogger logger) {
                 _logger = logger?.ForContext<MonitoredItemWrapper>() ??
                     throw new ArgumentNullException(nameof(logger));
                 Template = template.Clone() ??
@@ -1006,12 +1020,15 @@ namespace Microsoft.Azure.IIoT.OpcUa.Protocol.Services {
                     SamplingInterval = (int)Template.SamplingInterval.
                         GetValueOrDefault(TimeSpan.FromSeconds(1)).TotalMilliseconds,
                     DiscardOldest = !Template.DiscardNew.GetValueOrDefault(false),
-                    Filter =
-                        Template.DataChangeFilter.ToStackModel() ??
-                        codec.Decode(Template.EventFilter, true) ??
-                        ((MonitoringFilter)Template.AggregateFilter
-                            .ToStackModel(session.MessageContext))
                 };
+
+                if (DataTemplate != null) {
+                    Item.Filter = DataTemplate.DataChangeFilter.ToStackModel() ??
+                        ((MonitoringFilter)DataTemplate.AggregateFilter.ToStackModel(session.MessageContext));
+                }
+                else if (EventTemplate != null) {
+                    Item.Filter = codec.Decode(EventTemplate.EventFilter, true);
+                }
             }
 
             /// <summary>
