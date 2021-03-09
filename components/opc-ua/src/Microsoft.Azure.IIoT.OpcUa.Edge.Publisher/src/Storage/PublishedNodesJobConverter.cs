@@ -90,7 +90,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                 null : ToUserNamePasswordCredentialAsync(item).Result
                     },
                         // Select and batch nodes into published data set sources
-                        item => GetModels(item, legacyCliModel.ScaleTestCount.GetValueOrDefault(1)),
+                        item => GetModelsFromNodes(item, legacyCliModel.ScaleTestCount.GetValueOrDefault(1)),
                         // Comparer for connection information
                         new FuncCompare<ConnectionModel>((x, y) => x.IsSameAs(y)))
                     .Select(group => group
@@ -100,10 +100,10 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                         .GroupBy(n => n.OpcPublishingInterval)
                         .SelectMany(n => n
                             .Distinct((a, b) => {
-                                if (a.Id != b.Id || a.DisplayName != b.DisplayName) {
+                                if (a.Id != b.Id || a.DisplayName != b.DisplayName || a.GetType() != b.GetType()) {
                                     return false;
                                 }
-                                if (a is OpcNodeModel node1 && b is OpcNodeModel node2 && node1.OpcSamplingInterval != node2.OpcSamplingInterval) {
+                                if (a is OpcDataNodeModel node1 && b is OpcDataNodeModel node2 && node1.OpcSamplingInterval != node2.OpcSamplingInterval) {
                                     return false;
                                 }
                                 return true;
@@ -119,7 +119,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                             // NOTE: Why not just combine?
                             PublishedVariables = new PublishedDataItemsModel {
                                     PublishedData = opcEntities
-                                        .OfType<OpcNodeModel>()
+                                        .OfType<OpcDataNodeModel>()
                                         .Select(node => new PublishedDataSetVariableModel {
                                             // this is the monitored item id, not the nodeId!
                                             // Use the display name if any otherwisw the nodeId
@@ -139,7 +139,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                 },
                             PublishedEvents = new PublishedEventItemsModel {
                                     PublishedEvents = opcEntities
-                                        .OfType<OpcEventModel>()
+                                        .OfType<OpcEventNodeModel>()
                                         .Select(eventNotifier => new PublishedDataSetEventModel {
                                             Id = string.IsNullOrEmpty(eventNotifier.DisplayName) ? eventNotifier.Id : eventNotifier.DisplayName,
                                             EventNotifier = eventNotifier.Id, // NOTE: IMO should just be NodeId...
@@ -227,7 +227,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// <param name="item"></param>
         /// <param name="scaleTestCount"></param>
         /// <returns></returns>
-        private IEnumerable<BaseOpcNodeModel> GetModels(PublishedNodesEntryModel item,
+        private IEnumerable<OpcBaseNodeModel> GetModelsFromNodes(PublishedNodesEntryModel item,
             int scaleTestCount = 1) {
             if (item.OpcNodes != null) {
                 foreach (var node in item.OpcNodes) {
@@ -239,7 +239,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                     }
                     else {
                         for (var i = 0; i < scaleTestCount; i++) {
-                            yield return new OpcNodeModel {
+                            yield return new OpcDataNodeModel {
                                 Id = node.Id,
                                 DisplayName = string.IsNullOrEmpty(node.DisplayName) ?
                                     $"{node.Id}_{i}" : $"{node.DisplayName}_{i}",
@@ -267,7 +267,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                     }
                     else {
                         for (var i = 0; i < scaleTestCount; i++) {
-                            yield return new OpcEventModel {
+                            yield return new OpcEventNodeModel {
                                 Id = node.Id,
                                 DisplayName = string.IsNullOrEmpty(node.DisplayName) ?
                                     $"{node.Id}_{i}" : $"{node.DisplayName}_{i}",
@@ -284,7 +284,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
 
             // NOTE: Why these? Just for the query... really?
             if (item.NodeId?.Identifier != null) {
-                yield return new OpcNodeModel {
+                yield return new OpcDataNodeModel {
                     Id = item.NodeId.Identifier,
                 };
             }
@@ -295,7 +295,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// <param name="opcNodes"></param>
         /// <param name="legacyCliModel">The legacy command line arguments</param>
         /// <returns></returns>
-        private static TimeSpan? GetPublishingIntervalFromNodes(IEnumerable<BaseOpcNodeModel> opcNodes,
+        private static TimeSpan? GetPublishingIntervalFromNodes(IEnumerable<OpcBaseNodeModel> opcNodes,
             LegacyCliModel legacyCliModel) {
             var interval = opcNodes
                 .FirstOrDefault(x => x.OpcPublishingInterval != null)?.OpcPublishingIntervalTimespan;
@@ -336,7 +336,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// Describing an entry in the node list
         /// </summary>
         [DataContract]
-        public abstract class BaseOpcNodeModel {
+        public abstract class OpcBaseNodeModel {
 
             /// <summary> Node Identifier </summary>
             [DataMember(EmitDefaultValue = false)]
@@ -370,7 +370,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// Describing an entry in the node list
         /// </summary>
         [DataContract]
-        public class OpcNodeModel : BaseOpcNodeModel {
+        public class OpcDataNodeModel : OpcBaseNodeModel {
 
             /// <summary> Sampling interval </summary>
             [DataMember(EmitDefaultValue = false)]
@@ -409,7 +409,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
 
         /// <summary> OpcEventModel </summary>
         [DataContract]
-        public class OpcEventModel : BaseOpcNodeModel {
+        public class OpcEventNodeModel : OpcBaseNodeModel {
             /// <summary>
             /// The SelectClauses used to select the fields which should be published for an event.
             /// </summary>
@@ -473,11 +473,11 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
 
             /// <summary> Nodes defined in the collection. </summary>
             [DataMember(EmitDefaultValue = false)]
-            public List<OpcNodeModel> OpcNodes { get; set; }
+            public List<OpcDataNodeModel> OpcNodes { get; set; }
 
             /// <summary> Nodes defined in the collection. </summary>
             [DataMember(EmitDefaultValue = false)]
-            public List<OpcEventModel> OpcEvents { get; set; }
+            public List<OpcEventNodeModel> OpcEvents { get; set; }
         }
 
         /// <summary>

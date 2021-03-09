@@ -746,7 +746,16 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Storage.Tests {
             var converter = new PublishedNodesJobConverter(TraceLogger.Create(), _serializer);
             var jobs = converter.Read(new StringReader(pn.ToString()), new LegacyCliModel()).ToList();
 
-            Assert.NotEmpty(jobs);
+            Assert.Single(jobs);
+            Assert.Single(jobs.Single().WriterGroup.DataSetWriters);
+            Assert.Single(jobs.Single().WriterGroup.DataSetWriters.Single().DataSet.DataSetSource.PublishedEvents.PublishedEvents);
+            Assert.NotNull(jobs.Single().WriterGroup.DataSetWriters.Single().DataSet.DataSetSource.PublishedVariables);
+            Assert.NotNull(jobs.Single().WriterGroup.DataSetWriters.Single().DataSet.DataSetSource.PublishedEvents);
+            Assert.Empty(jobs.Single().WriterGroup.DataSetWriters.Single().DataSet.DataSetSource.PublishedVariables.PublishedData);
+            Assert.Single(jobs.Single().WriterGroup.DataSetWriters.Single().DataSet.DataSetSource.PublishedEvents.PublishedEvents);
+
+            var model = jobs.Single().WriterGroup.DataSetWriters.Single().DataSet.DataSetSource.PublishedEvents.PublishedEvents.Single();
+            Assert.Equal("i=2258", model.Id);
         }
 
         [Fact]
