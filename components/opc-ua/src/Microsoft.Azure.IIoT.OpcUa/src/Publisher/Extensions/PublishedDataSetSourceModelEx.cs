@@ -42,15 +42,14 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Models {
                 model.Connection?.User?.Type.ToString() +
                 model.Connection?.User?.Value.ToJson() +
                 model.SubscriptionSettings?.PublishingInterval.ToString() +
-                // NOTE: This doesn't work. "First()?" is odd.
                 model.PublishedVariables?.PublishedData.FirstOrDefault()?.Id +
                 model.PublishedVariables?.PublishedData.FirstOrDefault()?.PublishedVariableNodeId +
                 model.PublishedVariables?.PublishedData.FirstOrDefault()?.PublishedVariableDisplayName +
                 model.PublishedVariables?.PublishedData.FirstOrDefault()?.SamplingInterval +
                 model.PublishedVariables?.PublishedData.FirstOrDefault()?.HeartbeatInterval +
-                model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.Id +        // TODO: This needs to verified
+                model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.Id +
                 model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.EventNotifier +
-                model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.BrowsePath; // NOTE: This is never set?
+                model.PublishedEvents?.PublishedEvents.FirstOrDefault()?.BrowsePath;
             return id.ToSha1Hash();
         }
 

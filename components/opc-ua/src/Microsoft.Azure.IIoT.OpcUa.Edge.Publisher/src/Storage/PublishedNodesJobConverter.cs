@@ -116,7 +116,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                 PublishingInterval = GetPublishingIntervalFromNodes(opcEntities, legacyCliModel),
                                 ResolveDisplayName = legacyCliModel.FetchOpcNodeDisplayName
                             },
-                            // NOTE: Why not just combine?
                             PublishedVariables = new PublishedDataItemsModel {
                                     PublishedData = opcEntities
                                         .OfType<OpcDataNodeModel>()
@@ -141,13 +140,14 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                     PublishedEvents = opcEntities
                                         .OfType<OpcEventNodeModel>()
                                         .Select(eventNotifier => new PublishedDataSetEventModel {
+                                            // NOTE: Rename?
                                             Id = string.IsNullOrEmpty(eventNotifier.DisplayName) ? eventNotifier.Id : eventNotifier.DisplayName,
-                                            EventNotifier = eventNotifier.Id, // NOTE: IMO should just be NodeId...
-                                            SelectedFields = eventNotifier.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
+                                            EventNotifier = eventNotifier.Id,
+                                            SelectClauses = eventNotifier.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
                                                 NodeId = selectedField.TypeId,
                                                 BrowsePath = selectedField.BrowsePaths.ToArray()
                                             }).ToList(),
-                                            Filter = new ContentFilterModel {
+                                            WhereClause = new ContentFilterModel {
                                                 Elements = eventNotifier.WhereClauses.Select(whereClause => new ContentFilterElementModel {
                                                     FilterOperator = Enum.Parse<FilterOperatorType>(whereClause.Operator),
                                                     FilterOperands = whereClause.Operands.Select(filterOperand => new FilterOperandModel {
@@ -156,7 +156,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                                 }).ToList()
                                             },
                                             QueueSize = legacyCliModel.DefaultQueueSize, 
-                                            // NOTE: BrowsePath, TriggerId, etc. huh?
                                         }).ToList()
                                 },
                         }))
@@ -282,7 +281,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                 }
             }
 
-            // NOTE: Why these? Just for the query... really?
             if (item.NodeId?.Identifier != null) {
                 yield return new OpcDataNodeModel {
                     Id = item.NodeId.Identifier,
@@ -333,11 +331,10 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         }
 
         /// <summary>
-        /// Describing an entry in the node list
+        /// Describing an base entry in the node list.
         /// </summary>
         [DataContract]
-        public abstract class OpcBaseNodeModel { // NOTE: Can we do this?
-
+        public abstract class OpcBaseNodeModel {
             /// <summary> Node Identifier </summary>
             [DataMember(EmitDefaultValue = false)]
             public string Id { get; set; }
@@ -367,11 +364,10 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         }
 
         /// <summary>
-        /// Describing an entry in the node list
+        /// Describing a data item entry in the configuration.
         /// </summary>
         [DataContract]
-        public class OpcDataNodeModel : OpcBaseNodeModel { // NOTE: Can we do this?
-
+        public class OpcDataNodeModel : OpcBaseNodeModel {
             /// <summary> Sampling interval </summary>
             [DataMember(EmitDefaultValue = false)]
             public int? OpcSamplingInterval { get; set; }
@@ -407,7 +403,9 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
             public bool? SkipFirst { get; set; }
         }
 
-        /// <summary> OpcEventModel </summary>
+        /// <summary>
+        /// Describing an event entry in the configuration.
+        /// </summary>
         [DataContract]
         public class OpcEventNodeModel : OpcBaseNodeModel {
             /// <summary>
@@ -438,7 +436,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// </summary>
         [DataContract]
         public class PublishedNodesEntryModel {
-
             /// <summary> The endpoint URL of the OPC UA server. </summary>
             [DataMember(IsRequired = true)]
             public Uri EndpointUrl { get; set; }
