@@ -100,13 +100,12 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                         .GroupBy(n => n.OpcPublishingInterval)
                         .SelectMany(n => n
                             .Distinct((a, b) => {
-                                if (a.Id != b.Id || a.DisplayName != b.DisplayName || a.GetType() != b.GetType()) {
+                                if (a is OpcDataNodeModel node1 && 
+                                    b is OpcDataNodeModel node2 && 
+                                    node1.OpcSamplingInterval != node2.OpcSamplingInterval) {
                                     return false;
                                 }
-                                if (a is OpcDataNodeModel node1 && b is OpcDataNodeModel node2 && node1.OpcSamplingInterval != node2.OpcSamplingInterval) {
-                                    return false;
-                                }
-                                return true;
+                                return a.Id == b.Id && a.DisplayName == b.DisplayName;
                             })
                             .Batch(1000))
                         // time to create the internal structure for events
@@ -143,11 +142,11 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                             // NOTE: Rename?
                                             Id = string.IsNullOrEmpty(eventNotifier.DisplayName) ? eventNotifier.Id : eventNotifier.DisplayName,
                                             EventNotifier = eventNotifier.Id,
-                                            SelectClauses = eventNotifier.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
+                                            SelectedFields = eventNotifier.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
                                                 NodeId = selectedField.TypeId,
                                                 BrowsePath = selectedField.BrowsePaths.ToArray()
                                             }).ToList(),
-                                            WhereClause = new ContentFilterModel {
+                                            Filter = new ContentFilterModel {
                                                 Elements = eventNotifier.WhereClauses.Select(whereClause => new ContentFilterElementModel {
                                                     FilterOperator = Enum.Parse<FilterOperatorType>(whereClause.Operator),
                                                     FilterOperands = whereClause.Operands.Select(filterOperand => new FilterOperandModel {
