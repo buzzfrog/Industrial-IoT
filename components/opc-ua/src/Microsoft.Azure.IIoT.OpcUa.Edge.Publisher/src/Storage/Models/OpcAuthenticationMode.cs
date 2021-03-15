@@ -6,10 +6,15 @@
     /// </summary>
     [DataContract]
     public enum OpcAuthenticationMode {
-        /// <summary> Anonymous authentication </summary>
+        /// <summary> 
+        /// Anonymous authentication 
+        /// </summary>
         [EnumMember]
         Anonymous,
-        /// <summary> Username/Password authentication </summary>
+
+        /// <summary> 
+        /// Username/Password authentication 
+        /// </summary>
         [EnumMember]
         UsernamePassword
     }

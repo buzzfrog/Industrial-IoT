@@ -6,7 +6,9 @@
     /// </summary>
     [DataContract]
     public class NodeIdModel {
-        /// <summary> Identifier </summary>
+        /// <summary> 
+        /// Identifier 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public string Identifier { get; set; }
     }

@@ -7,15 +7,21 @@
     /// </summary>
     [DataContract]
     public abstract class OpcBaseNodeModel {
-        /// <summary> Node Identifier </summary>
+        /// <summary> 
+        /// Node Identifier 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public string Id { get; set; }
 
-        /// <summary> Also </summary>
+        /// <summary> 
+        /// Also 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public string ExpandedNodeId { get; set; }
 
-        /// <summary> Publishing interval </summary>
+        /// <summary> 
+        /// Publishing interval 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public int? OpcPublishingInterval { get; set; }
 
@@ -30,7 +36,9 @@
                 (int)value.Value.TotalMilliseconds : (int?)null;
         }
 
-        /// <summary> Display name </summary>
+        /// <summary> 
+        /// Display name 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public string DisplayName { get; set; }
     }

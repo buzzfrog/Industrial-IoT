@@ -22,7 +22,9 @@
                 (int)value.Value.TotalMilliseconds : (int?)null;
         }
 
-        /// <summary> Heartbeat </summary>
+        /// <summary> 
+        /// Heartbeat 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public int? HeartbeatInterval { get; set; }
 
@@ -37,7 +39,9 @@
                 (int)value.Value.TotalSeconds : (int?)null;
         }
 
-        /// <summary> Skip first value </summary>
+        /// <summary> 
+        /// Skip first value 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public bool? SkipFirst { get; set; }
     }
