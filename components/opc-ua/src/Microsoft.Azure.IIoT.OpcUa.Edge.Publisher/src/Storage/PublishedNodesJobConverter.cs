@@ -5,6 +5,7 @@
 
 namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
     using Microsoft.Azure.IIoT.OpcUa.Publisher.Models;
+    using Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models;
     using Microsoft.Azure.IIoT.OpcUa.Publisher;
     using Microsoft.Azure.IIoT.OpcUa.Protocol.Models;
     using Microsoft.Azure.IIoT.OpcUa.Core.Models;
@@ -12,13 +13,15 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
     using Microsoft.Azure.IIoT.Serializers;
     using Serilog;
     using System;
-    using System.Runtime.Serialization;
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.IO;
     using System.Linq;
     using System.Text;
     using System.Threading.Tasks;
+    using Microsoft.Azure.IIoT.Exceptions;
+    using Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models.Data;
+    using Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models.Events;
 
     /// <summary>
     /// Published nodes
@@ -53,6 +56,9 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
             _logger.Debug("Reading published nodes file ({elapsed}", sw.Elapsed);
             var items = _serializer.Deserialize<List<PublishedNodesEntryModel>>(
                 publishedNodesFile);
+            if (items == null) {
+                throw new SerializerException("Published nodes files, missformed");
+            }
             _logger.Information(
                 "Read {count} items from published nodes file in {elapsed}",
                 items.Count, sw.Elapsed);
@@ -74,10 +80,12 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                 return Enumerable.Empty<WriterGroupJobModel>();
             }
             try {
-                return items
+                var result = items
                     // Group by connection
                     .GroupBy(item => new ConnectionModel {
                         OperationTimeout = legacyCliModel.OperationTimeout,
+                        Id = item.DataSetWriterId,
+                        Group = item.DataSetWriterGroup,
                         Endpoint = new EndpointModel {
                             Url = item.EndpointUrl.OriginalString,
                             SecurityMode = item.UseSecurity == false &&
@@ -85,7 +93,8 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                     SecurityMode.None : SecurityMode.Best
                         },
                         User = item.OpcAuthenticationMode != OpcAuthenticationMode.UsernamePassword ?
-                                null : ToUserNamePasswordCredentialAsync(item).Result
+                                null : ToUserNamePasswordCredentialAsync(item).Result,
+
                     },
                         // Select and batch nodes into published data set sources
                         item => GetNodeModels(item, legacyCliModel.ScaleTestCount.GetValueOrDefault(1)),
@@ -103,7 +112,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                      node1.OpcSamplingInterval != node2.OpcSamplingInterval) {
                                      return false;
                                  }
-                                 return a.Id == b.Id && a.DisplayName == b.DisplayName;
+                                 return a.Id == b.Id && a.DisplayName == b.DisplayName && a.DataSetFieldId == b.DataSetFieldId;
                              })
                             .Batch(1000))
                         .Select(opcBaseNodes => new PublishedDataSetSourceModel {
@@ -118,14 +127,14 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                         .Select(node => new PublishedDataSetVariableModel {
                                             // this is the monitored item id, not the nodeId!
                                             // Use the display name if any otherwisw the nodeId
-                                            Id = string.IsNullOrEmpty(node.DisplayName)
-                                                ? node.Id : node.DisplayName,
+                                            Id = string.IsNullOrEmpty(node.DisplayName) ?
+                                                string.IsNullOrEmpty(node.DataSetFieldId) ? node.Id : node.DataSetFieldId : node.DisplayName,
                                             PublishedVariableNodeId = node.Id,
                                             PublishedVariableDisplayName = node.DisplayName,
                                             SamplingInterval = node.OpcSamplingIntervalTimespan ??
                                                 legacyCliModel.DefaultSamplingInterval,
-                                            HeartbeatInterval = node.HeartbeatInterval.HasValue ?
-                                                TimeSpan.FromSeconds(node.HeartbeatInterval.Value) :
+                                            HeartbeatInterval = node.HeartbeatIntervalTimespan.HasValue ?
+                                                node.HeartbeatIntervalTimespan.Value :
                                                 legacyCliModel.DefaultHeartbeatInterval,
                                             QueueSize = legacyCliModel.DefaultQueueSize,
                                             // TODO: skip first?
@@ -138,18 +147,11 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                                         .Select(eventNotifier => new PublishedDataSetEventModel {
                                             Id = string.IsNullOrEmpty(eventNotifier.DisplayName) ? eventNotifier.Id : eventNotifier.DisplayName,
                                             EventNotifier = eventNotifier.Id,
-                                            SelectedFields = eventNotifier.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
-                                                NodeId = selectedField.TypeId,
-                                                BrowsePath = selectedField.BrowsePaths.ToArray()
+                                            SelectedFields = eventNotifier.EventFilter.SelectClauses.Select(selectedField => new SimpleAttributeOperandModel {
+                                                NodeId = selectedField.NodeId,
+                                                BrowsePath = selectedField.BrowsePath
                                             }).ToList(),
-                                            Filter = new ContentFilterModel {
-                                                Elements = eventNotifier.WhereClauses.Select(whereClause => new ContentFilterElementModel {
-                                                    FilterOperator = Enum.Parse<FilterOperatorType>(whereClause.Operator),
-                                                    FilterOperands = whereClause.Operands.Select(filterOperand => new FilterOperandModel {
-                                                        Value = filterOperand.Literal
-                                                    }).ToList()
-                                                }).ToList()
-                                            },
+                                            Filter = eventNotifier.EventFilter.WhereClause,
                                             QueueSize = legacyCliModel.DefaultQueueSize,
                                         }).ToList()
                             }
@@ -165,11 +167,15 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                         },
                         WriterGroup = new WriterGroupModel {
                             MessageType = legacyCliModel.MessageEncoding,
-                            WriterGroupId = $"{dataSetSourceBatches.First().Connection.Endpoint.Url}_" +
-                                $"{new ConnectionIdentifier(dataSetSourceBatches.First().Connection)}",
+                            WriterGroupId = !string.IsNullOrEmpty(dataSetSourceBatches.First().Connection.Group)
+                                ? $"{dataSetSourceBatches.First().Connection.Group}"
+                                : $"{dataSetSourceBatches.First().Connection.Endpoint.Url}_" +
+                                    $"{new ConnectionIdentifier(dataSetSourceBatches.First().Connection)}",
                             DataSetWriters = dataSetSourceBatches.Select(dataSetSource => new DataSetWriterModel {
-                                DataSetWriterId = $"{dataSetSource.Connection.Endpoint.Url}_" +
-                                    $"{dataSetSource.GetHashSafe()}",
+                                DataSetWriterId = !string.IsNullOrEmpty(dataSetSource.Connection.Id)
+                                    ? $"{dataSetSource.Connection.Id}"
+                                    : $"{dataSetSource.Connection.Endpoint.Url}_" +
+                                        $"{dataSetSource.GetHashSafe()}",
                                 DataSet = new PublishedDataSetModel {
                                     DataSetSource = dataSetSource.Clone(),
                                 },
@@ -206,6 +212,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                             }
                         }
                     }).ToList();
+                return result;
             }
             catch (Exception ex){
                 _logger.Error(ex, "failed to convert the published nodes.");
@@ -228,22 +235,22 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                         node.Id = node.ExpandedNodeId;
                     }
                     if (scaleTestCount == 1) {
+                        node.OpcPublishingInterval = item.DataSetPublishingInterval.HasValue ? item.DataSetPublishingInterval : node.OpcPublishingInterval;
                         yield return node;
                     }
                     else {
                         for (var i = 0; i < scaleTestCount; i++) {
                             yield return new OpcDataNodeModel {
-                                Id = node.Id,
+                                Id = string.IsNullOrEmpty(node.DisplayName) ?
+                                                string.IsNullOrEmpty(node.DataSetFieldId) ? node.Id : node.DataSetFieldId : node.DisplayName,
                                 DisplayName = string.IsNullOrEmpty(node.DisplayName) ?
                                     $"{node.Id}_{i}" : $"{node.DisplayName}_{i}",
+                                DataSetFieldId = node.DataSetFieldId,
                                 ExpandedNodeId = node.ExpandedNodeId,
-                                HeartbeatInterval = node.HeartbeatInterval,
                                 HeartbeatIntervalTimespan = node.HeartbeatIntervalTimespan,
-                                OpcPublishingInterval = node.OpcPublishingInterval,
-                                OpcPublishingIntervalTimespan = node.OpcPublishingIntervalTimespan,
+                                OpcPublishingInterval = item.DataSetPublishingInterval.HasValue ? item.DataSetPublishingInterval : node.OpcPublishingInterval,
                                 OpcSamplingInterval = node.OpcSamplingInterval,
-                                OpcSamplingIntervalTimespan = node.OpcSamplingIntervalTimespan,
-                                SkipFirst = node.SkipFirst
+                                SkipFirst = node.SkipFirst,
                             };
                         }
                     }
@@ -256,19 +263,20 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                         node.Id = node.ExpandedNodeId;
                     }
                     if (scaleTestCount == 1) {
+                        node.OpcPublishingInterval = item.DataSetPublishingInterval.HasValue ? item.DataSetPublishingInterval : node.OpcPublishingInterval;
                         yield return node;
                     }
                     else {
                         for (var i = 0; i < scaleTestCount; i++) {
                             yield return new OpcEventNodeModel {
-                                Id = node.Id,
+                                Id = string.IsNullOrEmpty(node.DisplayName) ?
+                                                string.IsNullOrEmpty(node.DataSetFieldId) ? node.Id : node.DataSetFieldId : node.DisplayName,
                                 DisplayName = string.IsNullOrEmpty(node.DisplayName) ?
                                     $"{node.Id}_{i}" : $"{node.DisplayName}_{i}",
+                                DataSetFieldId = node.DataSetFieldId,
                                 ExpandedNodeId = node.ExpandedNodeId,
-                                OpcPublishingInterval = node.OpcPublishingInterval,
-                                OpcPublishingIntervalTimespan = node.OpcPublishingIntervalTimespan,
-                                SelectClauses = node.SelectClauses,
-                                WhereClauses = node.WhereClauses
+                                OpcPublishingInterval = item.DataSetPublishingInterval.HasValue ? item.DataSetPublishingInterval : node.OpcPublishingInterval,
+                                EventFilter = node.EventFilter,
                             };
                         }
                     }
@@ -323,307 +331,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                 Type = CredentialType.UserName,
                 Value = _serializer.FromObject(new { user, password })
             };
-        }
-
-        /// <summary>
-        /// Describing a base entry in a node list
-        /// </summary>
-        [DataContract]
-        public abstract class OpcBaseNodeModel {
-            /// <summary> Node Identifier </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string Id { get; set; }
-
-            /// <summary> Also </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string ExpandedNodeId { get; set; }
-
-            /// <summary> Publishing interval </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public int? OpcPublishingInterval { get; set; }
-
-            /// <summary>
-            /// OpcPublishingInterval as TimeSpan.
-            /// </summary>
-            [IgnoreDataMember]
-            public TimeSpan? OpcPublishingIntervalTimespan {
-                get => OpcPublishingInterval.HasValue ?
-                    TimeSpan.FromMilliseconds(OpcPublishingInterval.Value) : (TimeSpan?)null;
-                set => OpcPublishingInterval = value != null ?
-                    (int)value.Value.TotalMilliseconds : (int?)null;
-            }
-
-            /// <summary> Display name </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string DisplayName { get; set; }
-        }
-
-        /// <summary>
-        /// Describing a data item entry in the configuration.
-        /// </summary>
-        [DataContract]
-        public class OpcDataNodeModel : OpcBaseNodeModel {
-            /// <summary> Sampling interval </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public int? OpcSamplingInterval { get; set; }
-
-            /// <summary>
-            /// OpcSamplingInterval as TimeSpan.
-            /// </summary>
-            [IgnoreDataMember]
-            public TimeSpan? OpcSamplingIntervalTimespan {
-                get => OpcSamplingInterval.HasValue ?
-                    TimeSpan.FromMilliseconds(OpcSamplingInterval.Value) : (TimeSpan?)null;
-                set => OpcSamplingInterval = value != null ?
-                    (int)value.Value.TotalMilliseconds : (int?)null;
-            }
-
-            /// <summary> Heartbeat </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public int? HeartbeatInterval { get; set; }
-
-            /// <summary>
-            /// Heartbeat interval as TimeSpan.
-            /// </summary>
-            [IgnoreDataMember]
-            public TimeSpan? HeartbeatIntervalTimespan {
-                get => HeartbeatInterval.HasValue ?
-                    TimeSpan.FromSeconds(HeartbeatInterval.Value) : (TimeSpan?)null;
-                set => HeartbeatInterval = value != null ?
-                    (int)value.Value.TotalSeconds : (int?)null;
-            }
-
-            /// <summary> Skip first value </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public bool? SkipFirst { get; set; }
-        }
-
-        /// <summary>
-        /// Describing an event entry in the configuration.
-        /// </summary>
-        [DataContract]
-        public class OpcEventNodeModel : OpcBaseNodeModel {
-            /// <summary>
-            /// The SelectClauses used to select the fields which should be published for an event.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public List<SelectClauseModel> SelectClauses { get; set; }
-
-            /// <summary>
-            /// The WhereClause to specify which events are of interest.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public List<WhereClauseElementModel> WhereClauses { get; set; }
-        }
-
-        /// <summary>
-        /// Node id serialized as object
-        /// </summary>
-        [DataContract]
-        public class NodeIdModel {
-            /// <summary> Identifier </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string Identifier { get; set; }
-        }
-
-        /// <summary>
-        /// Contains the nodes which should be
-        /// </summary>
-        [DataContract]
-        public class PublishedNodesEntryModel {
-
-            /// <summary> The endpoint URL of the OPC UA server. </summary>
-            [DataMember(IsRequired = true)]
-            public Uri EndpointUrl { get; set; }
-
-            /// <summary> Secure transport should be used to </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public bool? UseSecurity { get; set; }
-
-            /// <summary> The node to monitor in "ns=" syntax. </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public NodeIdModel NodeId { get; set; }
-
-            /// <summary> authentication mode </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public OpcAuthenticationMode OpcAuthenticationMode { get; set; }
-
-            /// <summary> encrypted username </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string EncryptedAuthUsername { get; set; }
-
-            /// <summary> encrypted password </summary>
-            [DataMember]
-            public string EncryptedAuthPassword { get; set; }
-
-            /// <summary> plain username </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string OpcAuthenticationUsername { get; set; }
-
-            /// <summary> plain password </summary>
-            [DataMember]
-            public string OpcAuthenticationPassword { get; set; }
-
-            /// <summary> Data nodes defined in the collection. </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public List<OpcDataNodeModel> OpcNodes { get; set; }
-
-            /// <summary> Event nodes defined in the collection. </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public List<OpcEventNodeModel> OpcEvents { get; set; }
-        }
-
-        /// <summary>
-        /// Enum that defines the authentication method
-        /// </summary>
-        [DataContract]
-        public enum OpcAuthenticationMode {
-            /// <summary> Anonymous authentication </summary>
-            [EnumMember]
-            Anonymous,
-            /// <summary> Username/Password authentication </summary>
-            [EnumMember]
-            UsernamePassword
-        }
-
-        /// <summary>
-        /// Class describing select clauses for an event filter.
-        /// </summary>
-        [DataContract]
-        public class SelectClauseModel {
-            /// <summary>
-            /// The NodeId of the SimpleAttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string TypeId { get; set; }
-
-            /// <summary>
-            /// A list of QualifiedName's describing the field to be published.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public List<string> BrowsePaths { get; set; }
-
-            /// <summary>
-            /// The Attribute of the identified node to be published. This is Value by default.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string AttributeId { get; set; }
-
-            /// <summary>
-            /// The index range of the node values to be published.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string IndexRange { get; set; }
-        }
-
-        /// <summary> WhereClauseElementModel </summary>
-        [DataContract]
-        public class WhereClauseElementModel {
-            /// <summary>
-            /// The Operator of the WhereClauseElement.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string Operator { get; set; }
-
-            /// <summary>
-            /// The Operands of the WhereClauseElement.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public List<WhereClauseOperandModel> Operands { get; set; }
-        }
-
-        /// <summary> WhereClauseOperandModel </summary>
-        [DataContract]
-        public class WhereClauseOperandModel {
-            /// <summary>
-            /// Holds an element value.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public uint? Element { get; set; }
-
-            /// <summary>
-            /// Holds an Literal value.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string Literal { get; set; }
-
-            /// <summary>
-            /// Holds an AttributeOperand value.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public FilterAttributeModel Attribute { get; set; }
-
-            /// <summary>
-            /// Holds an SimpleAttributeOperand value.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public FilterSimpleAttributeModel SimpleAttribute { get; set; }
-        }
-
-        /// <summary>
-        /// Class to describe the SimpleAttributeOperand.
-        /// </summary>
-        [DataContract]
-        public class FilterSimpleAttributeModel {
-            /// <summary>
-            /// The TypeId of the SimpleAttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string TypeId { get; set; }
-
-            /// <summary>
-            /// The browse path as a list of QualifiedName's of the SimpleAttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public List<string> BrowsePaths { get; set; }
-
-            /// <summary>
-            /// The AttributeId of the SimpleAttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string AttributeId { get; set; }
-
-            /// <summary>
-            /// The IndexRange of the SimpleAttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string IndexRange { get; set; }
-        }
-
-        /// <summary>
-        /// Class to describe the AttributeOperand.
-        /// </summary>
-        [DataContract]
-        public class FilterAttributeModel {
-            /// <summary>
-            /// The NodeId of the AttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string NodeId { get; set; }
-
-            /// <summary>
-            /// The Alias of the AttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string Alias { get; set; }
-
-            /// <summary>
-            /// A RelativePath describing the browse path from NodeId of the AttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string BrowsePath { get; set; }
-
-            /// <summary>
-            /// The AttibuteId of the AttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string AttributeId { get; set; }
-
-            /// <summary>
-            /// The IndexRange of the AttributeOperand.
-            /// </summary>
-            [DataMember(EmitDefaultValue = false)]
-            public string IndexRange { get; set; }
         }
 
         private readonly IEngineConfiguration _config;
