@@ -20,6 +20,8 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
     using System.Text;
     using System.Threading.Tasks;
     using Microsoft.Azure.IIoT.Exceptions;
+    using Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models.Data;
+    using Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models.Events;
 
     /// <summary>
     /// Published nodes
@@ -104,33 +106,49 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                         .Flatten()
                         .GroupBy(n => n.OpcPublishingInterval)
                         .SelectMany(n => n
-                            .Distinct((a, b) => a.Id == b.Id && a.DisplayName == b.DisplayName && a.DataSetFieldId == b.DataSetFieldId &&
-                                        a.OpcSamplingInterval == b.OpcSamplingInterval)
+                             .Distinct((a, b) => {
+                                 if (a is OpcDataNodeModel node1 &&
+                                     b is OpcDataNodeModel node2 &&
+                                     node1.OpcSamplingInterval != node2.OpcSamplingInterval) {
+                                     return false;
+                                 }
+                                 return a.Id == b.Id && a.DisplayName == b.DisplayName && a.DataSetFieldId == b.DataSetFieldId;
+                             })
                             .Batch(1000))
-                        .Select(opcNodes => new PublishedDataSetSourceModel {
+                        .Select(opcBaseNodes => new PublishedDataSetSourceModel {
                             Connection = group.Key.Clone(),
                             SubscriptionSettings = new PublishedDataSetSettingsModel {
-                                PublishingInterval = GetPublishingIntervalFromNodes(opcNodes, legacyCliModel),
+                                PublishingInterval = GetPublishingIntervalFromNodes(opcBaseNodes, legacyCliModel),
                                 ResolveDisplayName = legacyCliModel.FetchOpcNodeDisplayName
                             },
                             PublishedVariables = new PublishedDataItemsModel {
-                                PublishedData = opcNodes
-                                    .Select(node => new PublishedDataSetVariableModel {
-                                        // this is the monitored item id, not the nodeId!
-                                        // Use the display name if any otherwise the nodeId
-                                        Id = string.IsNullOrEmpty(node.DisplayName) ?
+                                PublishedData = opcBaseNodes
+                                        .OfType<OpcDataNodeModel>()
+                                        .Select(node => new PublishedDataSetVariableModel {
+                                            // this is the monitored item id, not the nodeId!
+                                            // Use the display name if any otherwisw the nodeId
+                                            Id = string.IsNullOrEmpty(node.DisplayName) ?
                                                 string.IsNullOrEmpty(node.DataSetFieldId) ? node.Id : node.DataSetFieldId : node.DisplayName,
-                                        PublishedVariableNodeId = node.Id,
-                                        PublishedVariableDisplayName = node.DisplayName,
-                                        SamplingInterval = node.OpcSamplingIntervalTimespan ??
-                                            legacyCliModel.DefaultSamplingInterval,
-                                        HeartbeatInterval = node.HeartbeatIntervalTimespan.HasValue ?
-                                            node.HeartbeatIntervalTimespan.Value :
-                                            legacyCliModel.DefaultHeartbeatInterval,
-                                        QueueSize = legacyCliModel.DefaultQueueSize,
-                                        // TODO: skip first?
-                                        // SkipFirst = opcNode.SkipFirst,
-                                    }).ToList()
+                                            PublishedVariableNodeId = node.Id,
+                                            PublishedVariableDisplayName = node.DisplayName,
+                                            SamplingInterval = node.OpcSamplingIntervalTimespan ??
+                                                legacyCliModel.DefaultSamplingInterval,
+                                            HeartbeatInterval = node.HeartbeatIntervalTimespan.HasValue ?
+                                                node.HeartbeatIntervalTimespan.Value :
+                                                legacyCliModel.DefaultHeartbeatInterval,
+                                            QueueSize = legacyCliModel.DefaultQueueSize,
+                                        }).ToList()
+                            },
+                            PublishedEvents = new PublishedEventItemsModel {
+                                PublishedData = opcBaseNodes
+                                        .OfType<OpcEventNodeModel>()
+                                        .Select(eventNotifier => new PublishedDataSetEventModel {
+                                            Id = string.IsNullOrEmpty(eventNotifier.DisplayName) ? eventNotifier.Id : eventNotifier.DisplayName,
+                                            EventNotifier = eventNotifier.Id,
+                                            SelectClauses = eventNotifier.SelectClauses,
+                                            WhereClause = eventNotifier.WhereClause,
+                                            QueueSize = 0,
+                                        }).ToList()
                             }
                         }))
                     .Select(dataSetSourceBatches => new WriterGroupJobModel {
@@ -203,7 +221,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// <param name="item"></param>
         /// <param name="scaleTestCount"></param>
         /// <returns></returns>
-        private IEnumerable<OpcNodeModel> GetNodeModels(PublishedNodesEntryModel item,
+        private IEnumerable<OpcBaseNodeModel> GetNodeModels(PublishedNodesEntryModel item,
             int scaleTestCount = 1) {
 
             if (item.OpcNodes != null) {
@@ -217,8 +235,9 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                     }
                     else {
                         for (var i = 0; i < scaleTestCount; i++) {
-                            yield return new OpcNodeModel {
-                                Id = node.Id,
+                            yield return new OpcDataNodeModel {
+                                Id = string.IsNullOrEmpty(node.DisplayName) ?
+                                                string.IsNullOrEmpty(node.DataSetFieldId) ? node.Id : node.DataSetFieldId : node.DisplayName,
                                 DisplayName = string.IsNullOrEmpty(node.DisplayName) ?
                                     $"{node.Id}_{i}" : $"{node.DisplayName}_{i}",
                                 DataSetFieldId = node.DataSetFieldId,
@@ -232,8 +251,36 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
                     }
                 }
             }
+
+            if (item.OpcEvents != null) {
+                foreach (var node in item.OpcEvents) {
+                    if (string.IsNullOrEmpty(node.Id)) {
+                        node.Id = node.ExpandedNodeId;
+                    }
+                    if (scaleTestCount == 1) {
+                        node.OpcPublishingInterval = item.DataSetPublishingInterval.HasValue ? item.DataSetPublishingInterval : node.OpcPublishingInterval;
+                        yield return node;
+                    }
+                    else {
+                        for (var i = 0; i < scaleTestCount; i++) {
+                            yield return new OpcEventNodeModel {
+                                Id = string.IsNullOrEmpty(node.DisplayName) ?
+                                                string.IsNullOrEmpty(node.DataSetFieldId) ? node.Id : node.DataSetFieldId : node.DisplayName,
+                                DisplayName = string.IsNullOrEmpty(node.DisplayName) ?
+                                    $"{node.Id}_{i}" : $"{node.DisplayName}_{i}",
+                                DataSetFieldId = node.DataSetFieldId,
+                                ExpandedNodeId = node.ExpandedNodeId,
+                                OpcPublishingInterval = item.DataSetPublishingInterval.HasValue ? item.DataSetPublishingInterval : node.OpcPublishingInterval,
+                                SelectClauses = node.SelectClauses.Select(x => x.Clone()).ToList(),
+                                WhereClause = node.WhereClause.Clone(),
+                            };
+                        }
+                    }
+                }
+            }
+
             if (item.NodeId?.Identifier != null) {
-                yield return new OpcNodeModel {
+                yield return new OpcDataNodeModel {
                     Id = item.NodeId.Identifier,
                 };
             }
@@ -245,7 +292,7 @@ namespace Microsoft.Azure.IIoT.OpcUa.Edge.Publisher.Models {
         /// <param name="opcNodes"></param>
         /// <param name="legacyCliModel">The legacy command line arguments</param>
         /// <returns></returns>
-        private static TimeSpan? GetPublishingIntervalFromNodes(IEnumerable<OpcNodeModel> opcNodes,
+        private static TimeSpan? GetPublishingIntervalFromNodes(IEnumerable<OpcBaseNodeModel> opcNodes,
             LegacyCliModel legacyCliModel) {
             var interval = opcNodes
                 .FirstOrDefault(x => x.OpcPublishingInterval != null)?.OpcPublishingIntervalTimespan;

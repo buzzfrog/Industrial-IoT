@@ -3,25 +3,18 @@
 //  Licensed under the MIT License (MIT). See License.txt in the repo root for license information.
 // ------------------------------------------------------------
 
-namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models {
+namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models.Data {
     using System;
     using System.Runtime.Serialization;
 
     /// <summary>
-    /// Describing an entry in the node list
+    /// Describing a data item entry in the configuration.
     /// </summary>
     [DataContract]
-    public class OpcNodeModel {
-
-        /// <summary> Node Identifier </summary>
-        [DataMember(EmitDefaultValue = false)]
-        public string Id { get; set; }
-
-        /// <summary> Expanded Node identifier </summary>
-        [DataMember(EmitDefaultValue = false)]
-        public string ExpandedNodeId { get; set; }
-
-        /// <summary> Sampling interval </summary>
+    public class OpcDataNodeModel : OpcBaseNodeModel {
+        /// <summary> 
+        /// Sampling interval 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public int? OpcSamplingInterval { get; set; }
 
@@ -36,29 +29,6 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models {
                 (int)value.Value.TotalMilliseconds : (int?)null;
         }
 
-        /// <summary> Publishing interval </summary>
-        [DataMember(EmitDefaultValue = false)]
-        public int? OpcPublishingInterval { get; set; }
-
-        /// <summary>
-        /// OpcPublishingInterval as TimeSpan.
-        /// </summary>
-        [IgnoreDataMember]
-        public TimeSpan? OpcPublishingIntervalTimespan {
-            get => OpcPublishingInterval.HasValue ?
-                TimeSpan.FromMilliseconds(OpcPublishingInterval.Value) : (TimeSpan?)null;
-            set => OpcPublishingInterval = value != null ?
-                (int)value.Value.TotalMilliseconds : (int?)null;
-        }
-
-        /// <summary> DataSetFieldId </summary>
-        [DataMember(EmitDefaultValue = false)]
-        public string DataSetFieldId { get; set; }
-
-        /// <summary> Display name </summary>
-        [DataMember(EmitDefaultValue = false)]
-        public string DisplayName { get; set; }
-
         /// <summary> Heartbeat </summary>
         [DataMember(EmitDefaultValue = false)]
         public int? HeartbeatInterval {
@@ -72,7 +42,9 @@ namespace Microsoft.Azure.IIoT.OpcUa.Publisher.Config.Models {
         [DataMember(EmitDefaultValue = false)]
         public TimeSpan? HeartbeatIntervalTimespan { get; set; }
 
-        /// <summary> Skip first value </summary>
+        /// <summary> 
+        /// Skip first value 
+        /// </summary>
         [DataMember(EmitDefaultValue = false)]
         public bool? SkipFirst { get; set; }
     }
